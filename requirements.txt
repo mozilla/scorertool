@@ -1,0 +1,2 @@
+six
+deepspeech==0.6.0

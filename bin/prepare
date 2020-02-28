@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+if [ ! -d venv ]; then
+  python3 -m venv venv
+  source venv/bin/activate
+  pip install -r requirements.txt
+  printf "\n ****** Installed Python packages ****** \n\n\n\n"
+fi
+
+if [ ! -f dependencies/kenlm/build/bin/lmplz ]; then
+  mkdir -p dependencies/kenlm
+  pushd dependencies
+
+  wget -N https://kheafield.com/code/kenlm.tar.gz
+  tar -xzvf kenlm.tar.gz
+  pushd kenlm
+
+  mkdir -p build
+  pushd build
+  cmake ..
+  make -j 4
+  popd
+
+  popd
+
+  popd
+  printf "\n ****** Installed KenLM ****** \n\n\n\n"
+fi
+
+if [ ! -f dependencies/deepspeech/libdeepspeech.so ]; then
+  source venv/bin/activate
+  mkdir -p dependencies/deepspeech
+  python oscarlm/taskcluster.py --target dependencies/deepspeech --branch v0.6.0
+  printf "\n ****** Installed DeepSpeech tools ****** \n\n\n\n"
+fi
+
+mkdir -p models
