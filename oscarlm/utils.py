@@ -1,6 +1,8 @@
 
+import os
 import sys
 import time
+import requests
 
 
 KILO = 1024
@@ -80,10 +82,19 @@ def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys
         print_interval(interval_steps, time.time())
 
 
-class DownloadProgress():
-    def __init__(self):
-        self.downloaded = 0
+def download(from_url, to_path):
+    r = requests.get(from_url, stream=True)
+    total_size = int(r.headers.get('content-length', 0))
+    block_size = 1 * MEGABYTE
+    total_blocks = (total_size // block_size) + 1
+    with open(to_path, 'wb') as to_file:
+        print('Downloading "{}" to "{}"...'.format(from_url, to_path))
+        for block in log_progress(r.iter_content(block_size), total=total_blocks, entity='MB'):
+            to_file.write(block)
 
-    def __call__(self, block_num, block_size, total_size):
-        self.downloaded += block_size
 
+def maybe_download(from_url, to_path):
+    if os.path.isfile(to_path):
+        print('File "{}" already existing - not downloading again'.format(to_path))
+    else:
+        download(from_url, to_path)

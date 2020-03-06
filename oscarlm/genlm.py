@@ -7,6 +7,8 @@ import subprocess
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
+from utils import maybe_download
+from distutils.spawn import find_executable
 
 STOP_TOKEN = False
 NUM_WORKERS = 10
@@ -36,6 +38,7 @@ def count_words(cid, input_lines, resulting_lines, counters):
             for w in line_lower.split():
                 cw = ''
                 for c in w:
+                    c = str(c)
                     if c in LANG.alphabet:
                         cw += c
                 if len(cw) > 0:
@@ -56,23 +59,29 @@ def aggregate_counters(vocab_filename, counters):
             overall_counter = Counter(overall_counter.most_common(TOP_WORDS))
 
 
-def write_lines(resulting_lines):
-    while True:
-        lines = resulting_lines.get()
-        if lines == STOP_TOKEN:
-            return
-        print('\n'.join(lines))
+def write_lines(prepared_txt_gz, resulting_lines):
+    with open(prepared_txt_gz, 'wb') as archive_file:
+        gzip = subprocess.Popen(['gzip'], stdin=subprocess.PIPE, stdout=archive_file)
+        while True:
+            lines = resulting_lines.get()
+            if lines == STOP_TOKEN:
+                return
+            gzip.stdin.writelines(lines)
 
 
 def main():
 
+    raw_txt_gz = os.path.join(LANG.model_dir, 'raw.txt.gz')
+    prepared_txt_gz = os.path.join(LANG.model_dir, 'prepared.txt.gz')
     vocab_filename = os.path.join(LANG.model_dir, 'vocabular.txt')
+
+    maybe_download(LANG.text_url, raw_txt_gz)
 
     input_lines = Queue(MAX_CHUNKS)
     resulting_lines = Queue(MAX_CHUNKS)
     counters = Queue(NUM_WORKERS)
 
-    writer_process = Process(target=write_lines, args=(resulting_lines,))
+    writer_process = Process(target=write_lines, args=(prepared_txt_gz, resulting_lines,))
     writer_process.start()
 
     aggregator_process = Process(target=aggregate_counters, args=(vocab_filename, counters))
@@ -87,8 +96,10 @@ def main():
     for p in counter_processes:
         p.start()
 
+    gunzip = subprocess.Popen(['gunzip'], stdin=open(raw_txt_gz, 'rb'), stdout=subprocess.PIPE)
+
     lines = []
-    for line in sys.stdin:
+    for line in iter(gunzip.stdout.readline, ''):
         lines.append(line)
         if len(lines) >= LINES_PER_CHUNK:
             input_lines.put(lines)
@@ -147,6 +158,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Generate language models from OSCAR corpora', prog='genlm')
     parser.add_argument('--language', default='en', choices=LANGUAGE_CODES,
                         help='language of the model to generate')
+    parser.add_argument('--simulate', action='store_true',
+                        help='simulate language model generation with small amount of input data')
     return parser.parse_args()
 
 
