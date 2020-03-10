@@ -1,18 +1,18 @@
 
 import os
 import sys
+import math
 import argparse
+import itertools
 import subprocess
 
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download
+from utils import maybe_download, maybe_ungzip, maybe_join
 from distutils.spawn import find_executable
 
 STOP_TOKEN = False
-NUM_WORKERS = 10
-MAX_CHUNKS = 10 * NUM_WORKERS
 TOP_WORDS = 500000
 PRUNE_FACTOR = 10
 LINES_PER_CHUNK = 100000
@@ -22,28 +22,35 @@ KENLM_BIN = 'dependencies/kenlm/build/bin'
 DEEPSPEECH_BIN = 'dependencies/deepspeech'
 
 
-def count_words(cid, input_lines, resulting_lines, counters):
+def get_partial_path(index):
+    return os.path.join(LANG.model_dir, 'prepared.txt.partial{}'.format(index))
+
+
+def count_words(index, counters):
     counter = Counter()
-    while True:
-        lines = input_lines.get()
-        if len(counter.keys()) > MAX_KEYS or lines == STOP_TOKEN:
-            counters.put(counter)
-            counter = Counter()
-        if lines == STOP_TOKEN:
-            return
-        new_lines = []
-        for line in lines:
-            line_lower = line.lower()
-            new_lines.append(line_lower)
-            for w in line_lower.split():
-                cw = ''
-                for c in w:
-                    c = str(c)
-                    if c in LANG.alphabet:
-                        cw += c
-                if len(cw) > 0:
-                    counter[cw] += 1
-        resulting_lines.put(new_lines)
+    unprepared_txt = os.path.join(LANG.model_dir, 'unprepared.txt')
+    block_size = math.ceil(os.path.getsize(unprepared_txt) / ARGS.workers)
+    start = index * block_size
+    end = start + block_size
+    with open(unprepared_txt, 'rb') as unprepared_file, open(get_partial_path(index), 'w') as partial_file:
+        pos = start
+        unprepared_file.seek(start)
+        while pos < end:
+            try:
+                lines = unprepared_file.readlines(end - pos)
+                if index > 0 and pos == start:
+                    lines = lines[1:]
+                lines = list(itertools.chain.from_iterable(map(lambda l: LANG.clean(l.decode()), lines)))
+                pos = unprepared_file.tell()
+                for line in lines:
+                    for word in line.split():
+                        counter[word] += 1
+                partial_file.writelines(map(lambda l: l + '\n', lines))
+                if len(counter.keys()) > MAX_KEYS or pos >= end:
+                    counters.put(counter)
+                    counter = Counter()
+            except Exception as ex:
+                print('Something went wrong:' + str(ex))
 
 
 def aggregate_counters(vocab_filename, counters):
@@ -54,76 +61,59 @@ def aggregate_counters(vocab_filename, counters):
             with open(sys.argv[1], 'w') as vocab_file:
                 vocab_file.write('\n'.join(str(word) for word, count in overall_counter.most_common(TOP_WORDS)))
             return
+        print('aggregate counter', flush=True, file=sys.stderr)
         overall_counter += counter
         if len(overall_counter.keys()) > PRUNE_FACTOR * TOP_WORDS:
+            print('pruning counter', flush=True, file=sys.stderr)
             overall_counter = Counter(overall_counter.most_common(TOP_WORDS))
 
 
 def write_lines(prepared_txt_gz, resulting_lines):
     with open(prepared_txt_gz, 'wb') as archive_file:
-        gzip = subprocess.Popen(['gzip'], stdin=subprocess.PIPE, stdout=archive_file)
+        gzip = subprocess.Popen(['pigz'], stdin=subprocess.PIPE, stdout=archive_file)
         while True:
             lines = resulting_lines.get()
             if lines == STOP_TOKEN:
                 return
+            print('writing cleaned chunk', flush=True, file=sys.stderr)
             gzip.stdin.writelines(lines)
 
 
 def main():
-
     raw_txt_gz = os.path.join(LANG.model_dir, 'raw.txt.gz')
-    prepared_txt_gz = os.path.join(LANG.model_dir, 'prepared.txt.gz')
-    vocab_filename = os.path.join(LANG.model_dir, 'vocabular.txt')
+    unprepared_txt = os.path.join(LANG.model_dir, 'unprepared.txt')
+    prepared_txt = os.path.join(LANG.model_dir, 'prepared.txt')
+    vocab_txt = os.path.join(LANG.model_dir, 'vocabular.txt')
+    unfiltered_arpa = os.path.join(LANG.model_dir, 'unfiltered.arpa')
+    filtered_arpa = os.path.join(LANG.model_dir, 'filtered.arpa')
 
     maybe_download(LANG.text_url, raw_txt_gz)
+    maybe_ungzip(raw_txt_gz, unprepared_txt)
 
-    input_lines = Queue(MAX_CHUNKS)
-    resulting_lines = Queue(MAX_CHUNKS)
-    counters = Queue(NUM_WORKERS)
+    counters = Queue(ARGS.workers)
 
-    writer_process = Process(target=write_lines, args=(prepared_txt_gz, resulting_lines,))
-    writer_process.start()
-
-    aggregator_process = Process(target=aggregate_counters, args=(vocab_filename, counters))
+    aggregator_process = Process(target=aggregate_counters, args=(vocab_txt, counters))
     aggregator_process.start()
 
-    counter_processes = map(lambda index: Process(target=count_words,
-                                                  args=(vocab_filename + '_' + str(index),
-                                                        input_lines,
-                                                        resulting_lines,
-                                                        counters)),
-                            range(NUM_WORKERS))
+    counter_processes = list(map(lambda index: Process(target=count_words, args=(index, counters)),
+                                 range(ARGS.workers)))
     for p in counter_processes:
         p.start()
-
-    gunzip = subprocess.Popen(['gunzip'], stdin=open(raw_txt_gz, 'rb'), stdout=subprocess.PIPE)
-
-    lines = []
-    for line in iter(gunzip.stdout.readline, ''):
-        lines.append(line)
-        if len(lines) >= LINES_PER_CHUNK:
-            input_lines.put(lines)
-            lines = []
-    input_lines.put(lines)
-
-    for _ in counter_processes:
-        input_lines.put(STOP_TOKEN)
     for p in counter_processes:
         p.join()
 
     counters.put(STOP_TOKEN)
     aggregator_process.join()
 
-    resulting_lines.put(STOP_TOKEN)
-    writer_process.join()
+    maybe_join(list(map(lambda i: get_partial_path(i), range(ARGS.workers))), prepared_txt)
 
     subprocess.check_call([
         KENLM_BIN + '/lmplz',
-        '--temp_prefix', tmp_prefix,
+        # '--temp_prefix', tmp_prefix,
         '--memory', '25%',
         '--discount_fallback',
-        '--text', clean_text_path,
-        '--arpa', arpa_path,
+        '--text', prepared_txt,
+        '--arpa', unfiltered_arpa,
         '--skip', 'symbols',
         '--order', '5',
         '--prune', '0', '0', '1'
@@ -132,8 +122,8 @@ def main():
     subprocess.check_call([
         KENLM_BIN + '/filter',
         'single',
-        'model:' + arpa_path,
-        filtered_arpa_path
+        'model:' + unfiltered_arpa,
+        filtered_arpa
     ])
 
     subprocess.check_call([
@@ -142,7 +132,7 @@ def main():
         '-q', '8',
         'trie',
         '-s',
-        filtered_arpa_path,
+        filtered_arpa,
         lm_path
     ])
 
@@ -158,8 +148,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Generate language models from OSCAR corpora', prog='genlm')
     parser.add_argument('--language', default='en', choices=LANGUAGE_CODES,
                         help='language of the model to generate')
+    parser.add_argument('--workers', type=int, default=os.cpu_count(),
+                        help='number of preparation and counting workers')
     parser.add_argument('--simulate', action='store_true',
                         help='simulate language model generation with small amount of input data')
+
     return parser.parse_args()
 
 

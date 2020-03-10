@@ -1,8 +1,11 @@
 
 import os
 import sys
+import math
 import time
 import requests
+import subprocess
+from functools import partial
 
 
 KILO = 1024
@@ -98,3 +101,43 @@ def maybe_download(from_url, to_path):
         print('File "{}" already existing - not downloading again'.format(to_path))
     else:
         download(from_url, to_path)
+
+
+def ungzip(from_path, to_path):
+    total_size = os.path.getsize(from_path)
+    block_size = 1 * MEGABYTE
+    total_blocks = (total_size // block_size) + 1
+    with open(from_path, 'rb') as from_file, open(to_path, 'wb') as to_file:
+        gunzip = subprocess.Popen(['unpigz'], stdin=subprocess.PIPE, stdout=to_file)
+        print('Unzipping "{}" to "{}"...'.format(from_path, to_path))
+        for block in log_progress(iter(partial(from_file.read, block_size), b''), total=total_blocks, entity='MB'):
+            gunzip.stdin.write(block)
+
+
+def maybe_ungzip(from_path, to_path):
+    if os.path.isfile(to_path):
+        print('File "{}" already existing - not unzipping again'.format(to_path))
+    else:
+        ungzip(from_path, to_path)
+
+
+def join_files(from_paths, to_path):
+    block_size = 1 * MEGABYTE
+    total_blocks = sum(map(lambda f: math.ceil(os.path.getsize(f) / block_size), from_paths))
+
+    def _read_blocks():
+        for from_path in from_paths:
+            with open(from_path, 'rb') as from_file:
+                yield from iter(partial(from_file.read, block_size), b'')
+
+    with open(to_path, 'wb') as to_file:
+        print('Joining {} files to "{}"...'.format(len(from_paths), to_path))
+        for block in log_progress(_read_blocks(), total=total_blocks, entity='MB'):
+            to_file.write(block)
+
+
+def maybe_join(from_paths, to_path):
+    if os.path.isfile(to_path):
+        print('File "{}" already existing - not joining'.format(to_path))
+    else:
+        join_files(from_paths, to_path)

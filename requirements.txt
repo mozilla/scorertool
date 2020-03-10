@@ -1,3 +1,4 @@
 six
 requests
+num2words
 deepspeech==0.6.0
