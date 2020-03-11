@@ -14,6 +14,3 @@ class Language(LanguageBase):
             (re.compile(r'€'), 'euro'),
             (re.compile(r'£'), 'pfund')
         ]
-
-
-

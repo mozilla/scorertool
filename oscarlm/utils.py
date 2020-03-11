@@ -6,6 +6,7 @@ import time
 import requests
 import subprocess
 from functools import partial
+from distutils.spawn import find_executable
 
 
 KILO = 1024
@@ -14,6 +15,8 @@ MEGABYTE = KILO * KILOBYTE
 GIGABYTE = KILO * MEGABYTE
 TERABYTE = KILO * GIGABYTE
 SIZE_PREFIX_LOOKUP = {'k': KILOBYTE, 'm': MEGABYTE, 'g': GIGABYTE, 't': TERABYTE}
+
+UNZIP = 'unpigz' if find_executable('unpigz') else 'gunzip'
 
 
 def parse_file_size(file_size):
@@ -35,6 +38,16 @@ def secs_to_hours(secs):
     hours, remainder = divmod(secs, 3600)
     minutes, seconds = divmod(remainder, 60)
     return '%02d:%02d:%02d' % (hours, minutes, seconds)
+
+
+def section(title, width=100, border_width=12, empty_lines_before=3, empty_lines_after=1):
+    print('\n' * empty_lines_before, end='')
+    print('*' * width)
+    title = ' ' * (((width - 2 * border_width) - len(title)) // 2) + str(title)
+    title = title + ' ' * (width - len(title) - 2 * border_width)
+    print('*' * border_width + title + '*' * border_width)
+    print('*' * width)
+    print('\n' * empty_lines_after, end='')
 
 
 def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys.stderr):
@@ -108,7 +121,7 @@ def ungzip(from_path, to_path):
     block_size = 1 * MEGABYTE
     total_blocks = (total_size // block_size) + 1
     with open(from_path, 'rb') as from_file, open(to_path, 'wb') as to_file:
-        gunzip = subprocess.Popen(['unpigz'], stdin=subprocess.PIPE, stdout=to_file)
+        gunzip = subprocess.Popen([UNZIP], stdin=subprocess.PIPE, stdout=to_file)
         print('Unzipping "{}" to "{}"...'.format(from_path, to_path))
         for block in log_progress(iter(partial(from_file.read, block_size), b''), total=total_blocks, entity='MB'):
             gunzip.stdin.write(block)

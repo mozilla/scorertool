@@ -9,13 +9,9 @@ import subprocess
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download, maybe_ungzip, maybe_join
-from distutils.spawn import find_executable
+from utils import maybe_download, maybe_ungzip, maybe_join, section
 
 STOP_TOKEN = False
-TOP_WORDS = 500000
-PRUNE_FACTOR = 10
-LINES_PER_CHUNK = 100000
 MAX_KEYS = 100000
 
 KENLM_BIN = 'dependencies/kenlm/build/bin'
@@ -50,63 +46,64 @@ def count_words(index, counters):
                     counters.put(counter)
                     counter = Counter()
             except Exception as ex:
-                print('Something went wrong:' + str(ex))
+                print('Preparation worker failed:' + str(ex))
 
 
-def aggregate_counters(vocab_filename, counters):
+def aggregate_counters(vocabulary_txt, counters):
     overall_counter = Counter()
     while True:
         counter = counters.get()
         if counter == STOP_TOKEN:
-            with open(sys.argv[1], 'w') as vocab_file:
-                vocab_file.write('\n'.join(str(word) for word, count in overall_counter.most_common(TOP_WORDS)))
+            with open(vocabulary_txt, 'w') as vocabulary_file:
+                vocabulary_file.write('\n'.join(str(word) for word, count in overall_counter.most_common(ARGS.vocabulary_size)))
             return
-        print('aggregate counter', flush=True, file=sys.stderr)
         overall_counter += counter
-        if len(overall_counter.keys()) > PRUNE_FACTOR * TOP_WORDS:
-            print('pruning counter', flush=True, file=sys.stderr)
-            overall_counter = Counter(overall_counter.most_common(TOP_WORDS))
-
-
-def write_lines(prepared_txt_gz, resulting_lines):
-    with open(prepared_txt_gz, 'wb') as archive_file:
-        gzip = subprocess.Popen(['pigz'], stdin=subprocess.PIPE, stdout=archive_file)
-        while True:
-            lines = resulting_lines.get()
-            if lines == STOP_TOKEN:
-                return
-            print('writing cleaned chunk', flush=True, file=sys.stderr)
-            gzip.stdin.writelines(lines)
+        if len(overall_counter.keys()) > ARGS.prune_factor * ARGS.vocabulary_size:
+            overall_counter = Counter(overall_counter.most_common(ARGS.vocabulary_size))
 
 
 def main():
     raw_txt_gz = os.path.join(LANG.model_dir, 'raw.txt.gz')
     unprepared_txt = os.path.join(LANG.model_dir, 'unprepared.txt')
     prepared_txt = os.path.join(LANG.model_dir, 'prepared.txt')
-    vocab_txt = os.path.join(LANG.model_dir, 'vocabular.txt')
+    vocabulary_txt = os.path.join(LANG.model_dir, 'vocabulary.txt')
     unfiltered_arpa = os.path.join(LANG.model_dir, 'unfiltered.arpa')
     filtered_arpa = os.path.join(LANG.model_dir, 'filtered.arpa')
+    lm_binary = os.path.join(LANG.model_dir, 'lm.binary')
 
+    section('Downloading text data', empty_lines_before=1)
     maybe_download(LANG.text_url, raw_txt_gz)
+
+    section('Unzipping text data')
     maybe_ungzip(raw_txt_gz, unprepared_txt)
 
-    counters = Queue(ARGS.workers)
+    section('Preparing text and building vocabulary')
+    if not os.path.isfile(prepared_txt) or not os.path.isfile(vocabulary_txt):
+        counters = Queue(ARGS.workers)
+        aggregator_process = Process(target=aggregate_counters, args=(vocabulary_txt, counters))
+        aggregator_process.start()
+        counter_processes = list(map(lambda index: Process(target=count_words, args=(index, counters)),
+                                     range(ARGS.workers)))
+        try:
+            for p in counter_processes:
+                p.start()
+            for p in counter_processes:
+                p.join()
+            counters.put(STOP_TOKEN)
+            aggregator_process.join()
+            partials = list(map(lambda i: get_partial_path(i), range(ARGS.workers)))
+            maybe_join(partials, prepared_txt)
+            for partial in partials:
+                os.unlink(partial)
+        except KeyboardInterrupt:
+            aggregator_process.terminate()
+            for p in counter_processes:
+                p.terminate()
+            raise
+    else:
+        print('Files "{}" and "{}" existing - not preparing'.format(prepared_txt, vocabulary_txt))
 
-    aggregator_process = Process(target=aggregate_counters, args=(vocab_txt, counters))
-    aggregator_process.start()
-
-    counter_processes = list(map(lambda index: Process(target=count_words, args=(index, counters)),
-                                 range(ARGS.workers)))
-    for p in counter_processes:
-        p.start()
-    for p in counter_processes:
-        p.join()
-
-    counters.put(STOP_TOKEN)
-    aggregator_process.join()
-
-    maybe_join(list(map(lambda i: get_partial_path(i), range(ARGS.workers))), prepared_txt)
-
+    section('Building unfiltered language model')
     subprocess.check_call([
         KENLM_BIN + '/lmplz',
         # '--temp_prefix', tmp_prefix,
@@ -119,13 +116,17 @@ def main():
         '--prune', '0', '0', '1'
     ])
 
-    subprocess.check_call([
+    section('Filtering language model')
+    with open(vocabulary_txt, 'rb') as vocabulary_file:
+        vocabulary_content = vocabulary_file.read()
+    subprocess.run([
         KENLM_BIN + '/filter',
         'single',
         'model:' + unfiltered_arpa,
         filtered_arpa
-    ])
+    ], input=vocabulary_content, check=True)
 
+    section('Building binary representation')
     subprocess.check_call([
         KENLM_BIN + '/build_binary',
         '-a', '255',
@@ -133,25 +134,22 @@ def main():
         'trie',
         '-s',
         filtered_arpa,
-        lm_path
-    ])
-
-    subprocess.check_call([
-        DEEPSPEECH_BIN + '/generate_trie',
-        alphabet_path,
-        lm_path,
-        trie_path
+        lm_binary
     ])
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Generate language models from OSCAR corpora', prog='genlm')
-    parser.add_argument('--language', default='en', choices=LANGUAGE_CODES,
+    parser.add_argument('language', choices=LANGUAGE_CODES,
                         help='language of the model to generate')
     parser.add_argument('--workers', type=int, default=os.cpu_count(),
                         help='number of preparation and counting workers')
     parser.add_argument('--simulate', action='store_true',
                         help='simulate language model generation with small amount of input data')
+    parser.add_argument('--prune-factor', type=int, default=10,
+                        help='times --vocabulary-size of items to keep in each vocabulary aggregator')
+    parser.add_argument('--vocabulary-size', type=int, default=500000,
+                        help='final number of words in vocabulary')
 
     return parser.parse_args()
 
@@ -159,5 +157,8 @@ def parse_args():
 if __name__ == '__main__':
     ARGS = parse_args()
     LANG = get_language(ARGS.language)
-    print(LANG.model_dir)
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('\nInterrupted')
+        sys.exit()
