@@ -1,7 +1,8 @@
 
-import re
 import sys
 sys.path.insert(0, '../..')
+
+import re
 from languages import LanguageBase
 
 
@@ -14,3 +15,5 @@ class Language(LanguageBase):
             (re.compile(r'€'), 'euro'),
             (re.compile(r'£'), 'pfund')
         ]
+        self.alpha = 0.931289039105002
+        self.beta = 1.1834137581510284

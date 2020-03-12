@@ -109,11 +109,13 @@ def download(from_url, to_path):
             to_file.write(block)
 
 
-def maybe_download(from_url, to_path):
-    if os.path.isfile(to_path):
+def maybe_download(from_url, to_path, force=False):
+    if os.path.isfile(to_path) and not force:
         print('File "{}" already existing - not downloading again'.format(to_path))
+        return False
     else:
         download(from_url, to_path)
+        return True
 
 
 def ungzip(from_path, to_path):
@@ -127,11 +129,13 @@ def ungzip(from_path, to_path):
             gunzip.stdin.write(block)
 
 
-def maybe_ungzip(from_path, to_path):
-    if os.path.isfile(to_path):
+def maybe_ungzip(from_path, to_path, force=False):
+    if os.path.isfile(to_path) and not force:
         print('File "{}" already existing - not unzipping again'.format(to_path))
+        return False
     else:
         ungzip(from_path, to_path)
+        return True
 
 
 def join_files(from_paths, to_path):
@@ -149,8 +153,10 @@ def join_files(from_paths, to_path):
             to_file.write(block)
 
 
-def maybe_join(from_paths, to_path):
-    if os.path.isfile(to_path):
+def maybe_join(from_paths, to_path, force=False):
+    if os.path.isfile(to_path) and not force:
         print('File "{}" already existing - not joining'.format(to_path))
+        return False
     else:
         join_files(from_paths, to_path)
+        return True

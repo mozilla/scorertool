@@ -9,6 +9,7 @@ import sys
 import os
 import errno
 import stat
+import gzip
 
 import six.moves.urllib as urllib
 
@@ -52,11 +53,20 @@ def maybe_download_tc(target_dir, tc_url, progress=True):
 
     tc_filename = os.path.basename(tc_url)
     target_file = os.path.join(target_dir, tc_filename)
+    is_gzip = False
     if not os.path.isfile(target_file):
         print('Downloading %s ...' % tc_url)
-        urllib.request.urlretrieve(tc_url, target_file, reporthook=(report_progress if progress else None))
+        _, headers = urllib.request.urlretrieve(tc_url, target_file, reporthook=(report_progress if progress else None))
+        is_gzip = headers.get('Content-Encoding') == 'gzip'
     else:
         print('File already exists: %s' % target_file)
+
+    if is_gzip:
+        with open(target_file, "r+b") as frw:
+            decompressed = gzip.decompress(frw.read())
+            frw.seek(0)
+            frw.write(decompressed)
+            frw.truncate()
 
     return target_file
 
@@ -108,7 +118,7 @@ def main():
         ds_version = parse_version(version_string)
         args.branch = "v{}".format(version_string)
     else:
-        ds_version = args.branch.lstrip('v')
+        ds_version = parse_version(args.branch)
 
     if args.decoder:
         plat = platform.system().lower()
@@ -145,6 +155,11 @@ def main():
             exit(1)
 
     maybe_download_tc(target_dir=args.target, tc_url=get_tc_url(args.arch, args.artifact, args.branch))
+
+    if args.artifact == "convert_graphdef_memmapped_format":
+        convert_graph_file = os.path.join(args.target, args.artifact)
+        final_stat = os.stat(convert_graph_file)
+        os.chmod(convert_graph_file, final_stat.st_mode | stat.S_IEXEC)
 
     if '.tar.' in args.artifact:
         subprocess.check_call(['tar', 'xvf', os.path.join(args.target, args.artifact), '-C', args.target])
