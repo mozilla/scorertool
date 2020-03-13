@@ -50,24 +50,36 @@ def section(title, width=100, border_width=12, empty_lines_before=3, empty_lines
     print('\n' * empty_lines_after, end='')
 
 
-def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys.stderr):
-    if total is None and hasattr(it, '__len__'):
-        total = len(it)
-    if total is None:
-        line_format = ' {:8d} (elapsed: {}, speed: {:.2f} {}/{})'
-    else:
-        line_format = ' {:' + str(len(str(total))) + 'd} of {} : {:6.2f}% (elapsed: {}, speed: {:.2f} {}/{}, ETA: {})'
+class log_progress:
+    def __init__(self, it=None, total=None, interval=60, step=None, entity='it', format=None, file=sys.stderr):
+        self.it = it
+        self.total = total
+        if self.total is None and self.it is not None and hasattr(it, '__len__'):
+            self.total = len(it)
+        if format is None:
+            self.format = ':' + str(8 if self.total is None else len(str(self.total))) + 'd'
+        else:
+            self.format = format
+        if self.total is None:
+            self.line_format = ' {' + self.format + '} {} (elapsed: {}, speed: {:.2f} {}/{})'
+        else:
+            self.line_format = ' {' + self.format + '} of {' + self.format + '} {} : {:6.2f}% ' \
+                               '(elapsed: {}, speed: {:.2f} {}/{}, ETA: {})'
+        self.interval = interval
+        self.global_step = 0
+        self.step = step
+        self.entity = entity
+        self.file = file
+        self.overall_start = time.time()
+        self.interval_start = self.overall_start
+        self.interval_steps = 0
 
-    overall_start = time.time()
-    interval_start = overall_start
-    interval_steps = 0
-
-    def print_interval(steps, time_now):
-        elapsed = time_now - overall_start
+    def print_interval(self, steps, time_now):
+        elapsed = time_now - self.overall_start
         elapsed_str = secs_to_hours(elapsed)
         speed_unit = 's'
-        interval_duration = time_now - interval_start
-        print_speed = speed = interval_steps / (0.001 if interval_duration == 0.0 else interval_duration)
+        interval_duration = time_now - self.interval_start
+        print_speed = speed = self.interval_steps / (0.001 if interval_duration == 0.0 else interval_duration)
         if print_speed < 0.1:
             print_speed = print_speed * 60
             speed_unit = 'm'
@@ -77,25 +89,46 @@ def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys
         elif print_speed > 1000:
             print_speed = print_speed / 1000.0
             speed_unit = 'ms'
-        if total is None:
-            line = line_format.format(global_step, elapsed_str, print_speed, entity, speed_unit)
+        if self.total is None:
+            line = self.line_format.format(self.global_step,
+                                           self.entity,
+                                           elapsed_str,
+                                           print_speed,
+                                           self.entity,
+                                           speed_unit)
         else:
-            percent = global_step * 100.0 / total
-            eta = secs_to_hours(((total - global_step) / speed) if speed > 0 else 0)
-            line = line_format.format(global_step, total, percent, elapsed_str, print_speed, entity, speed_unit, eta)
-        print(line, file=file)
-        file.flush()
+            percent = self.global_step * 100.0 / self.total
+            eta = secs_to_hours(max(0, ((self.total - self.global_step) / speed) if speed > 0 else 0))
+            line = self.line_format.format(self.global_step,
+                                           self.total,
+                                           self.entity,
+                                           percent,
+                                           elapsed_str,
+                                           eta,
+                                           print_speed,
+                                           self.entity,
+                                           speed_unit)
+        print(line, file=self.file, flush=True)
+        self.interval_steps = 0
+        self.interval_start = time_now
 
-    for global_step, obj in enumerate(it, 1):
-        interval_steps += 1
-        yield obj
+    def increment(self, steps=1):
+        self.global_step += steps
+        self.interval_steps += steps
         t = time.time()
-        if (step is None and t - interval_start > interval) or (step is not None and interval_steps >= step):
-            print_interval(interval_steps, t)
-            interval_steps = 0
-            interval_start = t
-    if interval_steps > 0:
-        print_interval(interval_steps, time.time())
+        if ((self.step is None and t - self.interval_start > self.interval) or
+                (self.step is not None and self.interval_steps >= self.step)):
+            self.print_interval(self.interval_steps, t)
+
+    def end(self):
+        if self.interval_steps > 0:
+            self.print_interval(self.interval_steps, time.time())
+
+    def __iter__(self):
+        for obj in self.it:
+            yield obj
+            self.increment()
+        self.end()
 
 
 def download(from_url, to_path):

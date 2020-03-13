@@ -11,7 +11,7 @@ import subprocess
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download, maybe_ungzip, maybe_join, section
+from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progress, MEGABYTE
 
 STOP_TOKEN = False
 MAX_KEYS = 100000
@@ -31,7 +31,7 @@ def count_words(index, counters):
     start = index * block_size
     end = start + block_size
     with open(unprepared_txt, 'rb') as unprepared_file, open(get_partial_path(index), 'w') as partial_file:
-        pos = start
+        pos = old_pos = start
         unprepared_file.seek(start)
         while pos < end:
             try:
@@ -45,21 +45,26 @@ def count_words(index, counters):
                         counter[word] += 1
                 partial_file.writelines(map(lambda l: l + '\n', lines))
                 if len(counter.keys()) > MAX_KEYS or pos >= end:
-                    counters.put(counter)
+                    counters.put((counter, pos - old_pos))
+                    old_pos = pos
                     counter = Counter()
             except Exception as ex:
                 print('Preparation worker failed:' + str(ex))
 
 
-def aggregate_counters(vocabulary_txt, counters):
+def aggregate_counters(vocabulary_txt, source_bytes, counters):
     overall_counter = Counter()
+    progress_indicator = log_progress(total=source_bytes / MEGABYTE, entity='MB', format=':8.2f')
     while True:
-        counter = counters.get()
-        if counter == STOP_TOKEN:
+        counter_and_read_bytes = counters.get()
+        if counter_and_read_bytes == STOP_TOKEN:
             with open(vocabulary_txt, 'w') as vocabulary_file:
                 vocabulary_file.write('\n'.join(str(word) for word, count in overall_counter.most_common(ARGS.vocabulary_size)))
+            progress_indicator.end()
             return
+        counter, read_bytes = counter_and_read_bytes
         overall_counter += counter
+        progress_indicator.increment(steps=read_bytes / MEGABYTE)
         if len(overall_counter.keys()) > ARGS.prune_factor * ARGS.vocabulary_size:
             overall_counter = Counter(overall_counter.most_common(ARGS.vocabulary_size))
 
@@ -97,8 +102,10 @@ def main():
     section('Preparing text and building vocabulary')
     if redo or not os.path.isfile(prepared_txt) or not os.path.isfile(vocabulary_txt):
         redo = True
+        print('Preparing {} shards of "{}"...'.format(ARGS.workers, unprepared_txt))
         counters = Queue(ARGS.workers)
-        aggregator_process = Process(target=aggregate_counters, args=(vocabulary_txt, counters))
+        source_bytes = os.path.getsize(unprepared_txt)
+        aggregator_process = Process(target=aggregate_counters, args=(vocabulary_txt, source_bytes, counters))
         aggregator_process.start()
         counter_processes = list(map(lambda index: Process(target=count_words, args=(index, counters)),
                                      range(ARGS.workers)))
