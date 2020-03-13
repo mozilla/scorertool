@@ -2,7 +2,7 @@
 
 set -xe
 
-apt-get install -y python3-venv cmake libboost-all-dev libeigen3-dev
+apt-get install -y python3-venv cmake libboost-all-dev libeigen3-dev pigz
 
 export SW_DIR="/root"
 export MODELS_DIR="${ML_GROUP_DIR}/language-models"
