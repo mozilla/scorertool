@@ -16,8 +16,9 @@ from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progres
 STOP_TOKEN = False
 MAX_KEYS = 100000
 
-KENLM_BIN = 'dependencies/kenlm/build/bin'
-DEEPSPEECH_BIN = 'dependencies/deepspeech'
+SW_DIR = os.getenv('SW_DIR', 'dependencies')
+KENLM_BIN = SW_DIR + '/kenlm/build/bin'
+DEEPSPEECH_BIN = SW_DIR + '/deepspeech'
 
 
 def get_partial_path(index):
@@ -226,8 +227,6 @@ def parse_args():
                         help='language of the model to generate')
     parser.add_argument('--workers', type=int, default=os.cpu_count(),
                         help='number of preparation and counting workers')
-    parser.add_argument('--simulate', action='store_true',
-                        help='simulate language model generation with small amount of input data')
     parser.add_argument('--prune-factor', type=int, default=10,
                         help='times --vocabulary-size of items to keep in each vocabulary aggregator')
     parser.add_argument('--vocabulary-size', type=int, default=500000,

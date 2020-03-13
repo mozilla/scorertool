@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -xe
+
+apt-get install -y python3-venv cmake libboost-all-dev libeigen3-dev
+
+export SW_DIR="/root"
+export MODELS_DIR="${ML_GROUP_DIR}/language-models"
+mkdir -p "${MODELS_DIR}"
+
+bin/genlm --alphabet-mode utf8 en

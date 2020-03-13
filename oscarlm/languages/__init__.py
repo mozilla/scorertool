@@ -13,7 +13,7 @@ def code_from_filename(filename):
 FILE_DIR = os.path.dirname(__file__)
 LANGUAGE_CODES = list(map(code_from_filename, glob(FILE_DIR + '/[!_]*.py')))
 BASE_DIR = os.path.dirname(os.path.dirname(FILE_DIR))
-MODELS_DIR = os.path.join(BASE_DIR, 'models')
+MODELS_DIR = os.getenv('MODELS_DIR', os.path.join(BASE_DIR, 'models'))
 
 
 class LanguageBase:
