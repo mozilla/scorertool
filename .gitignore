@@ -1,3 +1,6 @@
+
+.pit*
+
 venv/
 dependencies/
 models
