@@ -64,7 +64,7 @@ class log_progress:
             self.line_format = ' {' + self.format + '} {} (elapsed: {}, speed: {:.2f} {}/{})'
         else:
             self.line_format = ' {' + self.format + '} of {' + self.format + '} {} : {:6.2f}% ' \
-                               '(elapsed: {}, speed: {:.2f} {}/{}, ETA: {})'
+                               '(elapsed: {}, ETA: {}, speed: {:.2f} {}/{})'
         self.interval = interval
         self.global_step = 0
         self.step = step
