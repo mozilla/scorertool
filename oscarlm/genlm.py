@@ -159,8 +159,8 @@ def main():
             KENLM_BIN + '/build_binary',
             '-a', '255',
             '-q', '8',
+            '-v',
             'trie',
-            '-s',
             filtered_arpa,
             lm_binary
         ])

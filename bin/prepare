@@ -12,8 +12,7 @@ if [ ! -f dependencies/kenlm/build/bin/lmplz ]; then
   mkdir -p dependencies/kenlm
   pushd dependencies
 
-  wget -N https://kheafield.com/code/kenlm.tar.gz
-  tar -xzvf kenlm.tar.gz
+  git clone https://github.com/kpu/kenlm.git
   pushd kenlm
 
   mkdir -p build
