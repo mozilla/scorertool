@@ -125,7 +125,7 @@ def main():
             counters.put(STOP_TOKEN)
             aggregator_process.join()
             partials = list(map(lambda i: get_partial_path(i), range(ARGS.workers)))
-            join(partials, prepared_txt)
+            join_files(partials, prepared_txt)
             for partial in partials:
                 os.unlink(partial)
         except KeyboardInterrupt:
