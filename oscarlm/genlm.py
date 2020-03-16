@@ -11,7 +11,7 @@ import subprocess
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progress, MEGABYTE, announce
+from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progress, MEGABYTE, announce, parse_file_size
 
 STOP_TOKEN = False
 MAX_KEYS = 100000
@@ -36,7 +36,7 @@ def count_words(index, counters):
         unprepared_file.seek(start)
         while pos < end:
             try:
-                lines = unprepared_file.readlines(end - pos)
+                lines = unprepared_file.readlines(max(ARGS.block_size, end - pos))
                 if index > 0 and pos == start:
                     lines = lines[1:]
                 lines = list(itertools.chain.from_iterable(map(lambda l: LANG.clean(l.decode()), lines)))
@@ -228,6 +228,8 @@ def parse_args():
                         help='language of the model to generate')
     parser.add_argument('--workers', type=int, default=os.cpu_count(),
                         help='number of preparation and counting workers')
+    parser.add_argument('--block-size', type=str, default='100M',
+                        help='(maximum) preparation block size per worker to read at once during preparation')
     parser.add_argument('--prune-factor', type=int, default=10,
                         help='times --vocabulary-size of items to keep in each vocabulary aggregator')
     parser.add_argument('--vocabulary-size', type=int, default=500000,
@@ -254,6 +256,7 @@ if __name__ == '__main__':
         LANG.alpha = ARGS.alpha
     if ARGS.beta is not None:
         LANG.beta = ARGS.beta
+    ARGS.block_size = parse_file_size(ARGS.block_size)
     try:
         main()
     except KeyboardInterrupt:
