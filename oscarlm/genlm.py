@@ -36,16 +36,21 @@ def count_words(index, counters):
         unprepared_file.seek(start)
         while pos < end:
             try:
+                announce('Shard {}: reading'.format(index))
                 lines = unprepared_file.readlines(max(ARGS.block_size, end - pos))
                 if index > 0 and pos == start:
                     lines = lines[1:]
-                lines = list(itertools.chain.from_iterable(map(lambda l: LANG.clean(l.decode()), lines)))
                 pos = unprepared_file.tell()
+                announce('Shard {}: cleaning'.format(index))
+                lines = list(itertools.chain.from_iterable(map(lambda l: LANG.clean(l.decode()), lines)))
+                announce('Shard {}: counting'.format(index))
                 for line in lines:
                     for word in line.split():
                         counter[word] += 1
+                announce('Shard {}: writing'.format(index))
                 partial_file.writelines(map(lambda l: l + '\n', lines))
                 if len(counter.keys()) > MAX_KEYS or pos >= end:
+                    announce('Shard {}: sending'.format(index))
                     counters.put((counter, pos - old_pos))
                     old_pos = pos
                     counter = Counter()
