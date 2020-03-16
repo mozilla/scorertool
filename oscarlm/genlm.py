@@ -5,16 +5,14 @@ import math
 import struct
 import shutil
 import argparse
-import itertools
 import subprocess
 
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progress, MEGABYTE, announce, parse_file_size
+from utils import maybe_download, maybe_ungzip, join, section, log_progress, MEGABYTE, announce, parse_file_size
 
 STOP_TOKEN = False
-MAX_KEYS = 100000
 
 SW_DIR = os.getenv('SW_DIR', 'dependencies')
 KENLM_BIN = SW_DIR + '/kenlm/build/bin'
@@ -26,31 +24,39 @@ def get_partial_path(index):
 
 
 def count_words(index, counters):
-    counter = Counter()
-    unprepared_txt = os.path.join(LANG.model_dir, 'unprepared.txt')
-    block_size = math.ceil(os.path.getsize(unprepared_txt) / ARGS.workers)
-    start = index * block_size
-    end = start + block_size
-    with open(unprepared_txt, 'rb') as unprepared_file, open(get_partial_path(index), 'w') as partial_file:
-        pos = old_pos = start
-        unprepared_file.seek(start)
-        while pos < end:
-            try:
-                lines = unprepared_file.readlines(max(ARGS.block_size, end - pos))
-                if index > 0 and pos == start:
-                    lines = lines[1:]
-                lines = list(itertools.chain.from_iterable(map(lambda l: LANG.clean(l.decode()), lines)))
+    try:
+        counter = Counter()
+        unprepared_txt = os.path.join(LANG.model_dir, 'unprepared.txt')
+        file_size = os.path.getsize(unprepared_txt)
+        block_size = math.ceil(file_size / ARGS.workers)
+        start = index * block_size
+        end = min(file_size, start + block_size)
+        with open(unprepared_txt, 'rb', buffering=ARGS.block_size) as unprepared_file, \
+                open(get_partial_path(index), 'w', buffering=ARGS.block_size) as partial_file:
+            pos = old_pos = start
+            unprepared_file.seek(start)
+            first = True
+            while pos < end:
+                line = unprepared_file.readline()
                 pos = unprepared_file.tell()
+                if index > 0 and first:
+                    first = False
+                    continue
+                try:
+                    line = line.decode()
+                except UnicodeDecodeError:
+                    continue
+                lines = LANG.clean(line)
                 for line in lines:
                     for word in line.split():
                         counter[word] += 1
-                partial_file.writelines(map(lambda l: l + '\n', lines))
-                if len(counter.keys()) > MAX_KEYS or pos >= end:
+                    partial_file.write(line + '\n')
+                if len(counter.keys()) > ARGS.vocabulary_size or pos >= end:
                     counters.put((counter, pos - old_pos))
                     old_pos = pos
                     counter = Counter()
-            except Exception as ex:
-                announce('Preparation worker failed:' + str(ex))
+    except Exception as ex:
+        announce('Shard worker {}: Error - {}'.format(index, ex))
 
 
 def aggregate_counters(vocabulary_txt, source_bytes, counters):
@@ -119,7 +125,7 @@ def main():
             counters.put(STOP_TOKEN)
             aggregator_process.join()
             partials = list(map(lambda i: get_partial_path(i), range(ARGS.workers)))
-            maybe_join(partials, prepared_txt)
+            join(partials, prepared_txt)
             for partial in partials:
                 os.unlink(partial)
         except KeyboardInterrupt:
