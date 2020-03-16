@@ -19,6 +19,10 @@ SIZE_PREFIX_LOOKUP = {'k': KILOBYTE, 'm': MEGABYTE, 'g': GIGABYTE, 't': TERABYTE
 UNZIP = 'unpigz' if find_executable('unpigz') else 'gunzip'
 
 
+def announce(message, file=sys.stderr, flush=True, end='\n'):
+    print(message, file=file, flush=flush, end=end)
+
+
 def parse_file_size(file_size):
     file_size = file_size.lower().strip()
     if len(file_size) == 0:
@@ -41,13 +45,13 @@ def secs_to_hours(secs):
 
 
 def section(title, width=100, border_width=12, empty_lines_before=3, empty_lines_after=1):
-    print('\n' * empty_lines_before, end='')
-    print('*' * width)
+    announce('\n' * empty_lines_before, end='')
+    announce('*' * width)
     title = ' ' * (((width - 2 * border_width) - len(title)) // 2) + str(title)
     title = title + ' ' * (width - len(title) - 2 * border_width)
-    print('*' * border_width + title + '*' * border_width)
-    print('*' * width)
-    print('\n' * empty_lines_after, end='')
+    announce('*' * border_width + title + '*' * border_width)
+    announce('*' * width)
+    announce('\n' * empty_lines_after, end='')
 
 
 class log_progress:
@@ -108,7 +112,7 @@ class log_progress:
                                            print_speed,
                                            self.entity,
                                            speed_unit)
-        print(line, file=self.file, flush=True)
+        announce(line, file=self.file, flush=True)
         self.interval_steps = 0
         self.interval_start = time_now
 
@@ -137,14 +141,14 @@ def download(from_url, to_path):
     block_size = 1 * MEGABYTE
     total_blocks = (total_size // block_size) + 1
     with open(to_path, 'wb') as to_file:
-        print('Downloading "{}" to "{}"...'.format(from_url, to_path))
+        announce('Downloading "{}" to "{}"...'.format(from_url, to_path))
         for block in log_progress(r.iter_content(block_size), total=total_blocks, entity='MB'):
             to_file.write(block)
 
 
 def maybe_download(from_url, to_path, force=False):
     if os.path.isfile(to_path) and not force:
-        print('File "{}" already existing - not downloading again'.format(to_path))
+        announce('File "{}" already existing - not downloading again'.format(to_path))
         return False
     else:
         download(from_url, to_path)
@@ -157,14 +161,14 @@ def ungzip(from_path, to_path):
     total_blocks = (total_size // block_size) + 1
     with open(from_path, 'rb') as from_file, open(to_path, 'wb') as to_file:
         gunzip = subprocess.Popen([UNZIP], stdin=subprocess.PIPE, stdout=to_file)
-        print('Unzipping "{}" to "{}"...'.format(from_path, to_path))
+        announce('Unzipping "{}" to "{}"...'.format(from_path, to_path))
         for block in log_progress(iter(partial(from_file.read, block_size), b''), total=total_blocks, entity='MB'):
             gunzip.stdin.write(block)
 
 
 def maybe_ungzip(from_path, to_path, force=False):
     if os.path.isfile(to_path) and not force:
-        print('File "{}" already existing - not unzipping again'.format(to_path))
+        announce('File "{}" already existing - not unzipping again'.format(to_path))
         return False
     else:
         ungzip(from_path, to_path)
@@ -172,7 +176,7 @@ def maybe_ungzip(from_path, to_path, force=False):
 
 
 def join_files(from_paths, to_path):
-    block_size = 1 * MEGABYTE
+    block_size = 10 * MEGABYTE
     total_blocks = sum(map(lambda f: math.ceil(os.path.getsize(f) / block_size), from_paths))
 
     def _read_blocks():
@@ -181,14 +185,14 @@ def join_files(from_paths, to_path):
                 yield from iter(partial(from_file.read, block_size), b'')
 
     with open(to_path, 'wb') as to_file:
-        print('Joining {} files to "{}"...'.format(len(from_paths), to_path))
+        announce('Joining {} files to "{}"...'.format(len(from_paths), to_path))
         for block in log_progress(_read_blocks(), total=total_blocks, entity='MB'):
             to_file.write(block)
 
 
 def maybe_join(from_paths, to_path, force=False):
     if os.path.isfile(to_path) and not force:
-        print('File "{}" already existing - not joining'.format(to_path))
+        announce('File "{}" already existing - not joining'.format(to_path))
         return False
     else:
         join_files(from_paths, to_path)

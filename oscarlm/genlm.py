@@ -11,7 +11,7 @@ import subprocess
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progress, MEGABYTE
+from utils import maybe_download, maybe_ungzip, maybe_join, section, log_progress, MEGABYTE, announce
 
 STOP_TOKEN = False
 MAX_KEYS = 100000
@@ -50,7 +50,7 @@ def count_words(index, counters):
                     old_pos = pos
                     counter = Counter()
             except Exception as ex:
-                print('Preparation worker failed:' + str(ex))
+                announce('Preparation worker failed:' + str(ex))
 
 
 def aggregate_counters(vocabulary_txt, source_bytes, counters):
@@ -89,6 +89,7 @@ def main():
     filtered_arpa = os.path.join(LANG.model_dir, 'filtered.arpa')
     lm_binary = os.path.join(LANG.model_dir, 'lm.binary')
     kenlm_scorer = os.path.join(LANG.model_dir, 'kenlm.scorer')
+    temp_prefix = os.path.join(LANG.model_dir, 'tmp')
 
     redo = ARGS.force_download
 
@@ -103,7 +104,7 @@ def main():
     section('Preparing text and building vocabulary')
     if redo or not os.path.isfile(prepared_txt) or not os.path.isfile(vocabulary_txt):
         redo = True
-        print('Preparing {} shards of "{}"...'.format(ARGS.workers, unprepared_txt))
+        announce('Preparing {} shards of "{}"...'.format(ARGS.workers, unprepared_txt))
         counters = Queue(ARGS.workers)
         source_bytes = os.path.getsize(unprepared_txt)
         aggregator_process = Process(target=aggregate_counters, args=(vocabulary_txt, source_bytes, counters))
@@ -127,15 +128,15 @@ def main():
                 p.terminate()
             raise
     else:
-        print('Files "{}" and \n\t"{}" existing - not preparing'.format(prepared_txt, vocabulary_txt))
+        announce('Files "{}" and \n\t"{}" existing - not preparing'.format(prepared_txt, vocabulary_txt))
 
     section('Building unfiltered language model')
     if redo or not os.path.isfile(unfiltered_arpa):
         redo = True
         subprocess.check_call([
             KENLM_BIN + '/lmplz',
-            # '--temp_prefix', tmp_prefix,
-            '--memory', '25%',
+            '--temp_prefix', temp_prefix,
+            '--memory', '80%',
             '--discount_fallback',
             '--text', prepared_txt,
             '--arpa', unfiltered_arpa,
@@ -144,7 +145,7 @@ def main():
             '--prune', '0', '0', '1'
         ])
     else:
-        print('File "{}" existing - not generating'.format(unfiltered_arpa))
+        announce('File "{}" existing - not generating'.format(unfiltered_arpa))
 
     section('Filtering language model')
     if redo or not os.path.isfile(filtered_arpa):
@@ -158,7 +159,7 @@ def main():
             filtered_arpa
         ], input=vocabulary_content, check=True)
     else:
-        print('File "{}" existing - not filtering'.format(filtered_arpa))
+        announce('File "{}" existing - not filtering'.format(filtered_arpa))
 
     section('Generating binary representation')
     if redo or not os.path.isfile(lm_binary):
@@ -173,7 +174,7 @@ def main():
             lm_binary
         ])
     else:
-        print('File "{}" existing - not generating'.format(lm_binary))
+        announce('File "{}" existing - not generating'.format(lm_binary))
 
     section('Building scorer')
     if redo or not os.path.isfile(kenlm_scorer):
@@ -186,8 +187,8 @@ def main():
                     words.add(word.encode())
                     if len(word) > 1:
                         vocab_looks_char_based = False
-        print("{} unique words read from vocabulary file.".format(len(words)))
-        print(
+        announce("{} unique words read from vocabulary file.".format(len(words)))
+        announce(
             "{} like a character based model.".format(
                 "Looks" if vocab_looks_char_based else "Doesn't look"
             )
@@ -203,7 +204,7 @@ def main():
         alphabet = Alphabet()
         err = alphabet.deserialize(serialized_alphabet, len(serialized_alphabet))
         if err != 0:
-            print('Error loading alphabet: {}'.format(err))
+            announce('Error loading alphabet: {}'.format(err))
             sys.exit(1)
         scorer = Scorer()
         scorer.set_alphabet(alphabet)
@@ -213,12 +214,12 @@ def main():
         scorer.fill_dictionary(list(words))
         shutil.copy(lm_binary, kenlm_scorer)
         scorer.save_dictionary(kenlm_scorer, True)  # append, not overwrite
-        print('Package created in {}'.format(kenlm_scorer))
-        print('Testing package...')
+        announce('Package created in {}'.format(kenlm_scorer))
+        announce('Testing package...')
         scorer = Scorer()
         scorer.load_lm(kenlm_scorer)
     else:
-        print('File "{}" existing - not building'.format(kenlm_scorer))
+        announce('File "{}" existing - not building'.format(kenlm_scorer))
 
 
 def parse_args():
@@ -256,5 +257,5 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print('\nInterrupted')
+        announce('\nInterrupted')
         sys.exit()
