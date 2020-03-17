@@ -3,6 +3,7 @@ import os
 import sys
 import math
 import time
+import inspect
 import requests
 import subprocess
 from functools import partial
@@ -12,9 +13,10 @@ from distutils.spawn import find_executable
 KILO = 1024
 KILOBYTE = 1 * KILO
 MEGABYTE = KILO * KILOBYTE
-GIGABYTE = KILO * MEGABYTE
-TERABYTE = KILO * GIGABYTE
-SIZE_PREFIX_LOOKUP = {'k': KILOBYTE, 'm': MEGABYTE, 'g': GIGABYTE, 't': TERABYTE}
+SIZE_PREFIXES = 'kMGTPEZY'
+SIZE_PREFIX_LOOKUP = {}
+for exp, prefix in enumerate(SIZE_PREFIXES):
+    SIZE_PREFIX_LOOKUP[prefix.lower()] = int(math.pow(KILO, exp + 1))
 
 UNZIP = 'unpigz' if find_executable('unpigz') else 'gunzip'
 
@@ -32,6 +34,12 @@ def parse_file_size(file_size):
         file_size = file_size[:-1]
     e = file_size[-1]
     return SIZE_PREFIX_LOOKUP[e] * n if e in SIZE_PREFIX_LOOKUP else n
+
+
+def human_readable_file_size(file_size, sep=' '):
+    exp = min(math.floor(math.log(file_size, KILO)), len(SIZE_PREFIXES))
+    return ('{:.0f}{}{}B' if exp == 0 else '{:.2f}{}{}B')\
+        .format(file_size / math.pow(KILO, exp), sep, SIZE_PREFIXES[exp - 1] if exp > 0 else '')
 
 
 def keep_only_digits(txt):
@@ -55,94 +63,112 @@ def section(title, width=100, border_width=12, empty_lines_before=3, empty_lines
 
 
 class log_progress:
-    def __init__(self, it=None, total=None, interval=60, step=None, entity='it', format=None, file=sys.stderr):
+    def __init__(self,
+                 it=None,
+                 total=None,
+                 max_interval_time=1,
+                 max_interval_value=None,
+                 format='{} it',
+                 time_unit=None,
+                 value_getter=lambda obj: 1,
+                 absolute=False,
+                 file=sys.stderr):
         self.it = it
         self.total = total
         if self.total is None and self.it is not None and hasattr(it, '__len__'):
             self.total = len(it)
-        if format is None:
-            self.format = ':' + str(8 if self.total is None else len(str(self.total))) + 'd'
-        else:
+        self.time_unit = time_unit
+        self.value_getter = value_getter
+        self.absolute = absolute
+        if inspect.isfunction(format):
             self.format = format
-        if self.total is None:
-            self.line_format = ' {' + self.format + '} {} (elapsed: {}, speed: {:.2f} {}/{})'
+        elif format == 'bytes':
+            self.format = lambda nb: human_readable_file_size(nb)
+            if self.time_unit is None:
+                self.time_unit = 's'
         else:
-            self.line_format = ' {' + self.format + '} of {' + self.format + '} {} : {:6.2f}% ' \
-                               '(elapsed: {}, ETA: {}, speed: {:.2f} {}/{})'
-        self.interval = interval
-        self.global_step = 0
-        self.step = step
-        self.entity = entity
+            self.format = lambda n: format.format(n)
+        self.line_format = ' {} (elapsed: {}, speed: {}/{})' if self.total is None \
+            else ' {} of {} : {:6.2f}% (elapsed: {}, ETA: {}, speed: {}/{})'
+        self.max_interval_time = max_interval_time
+        self.max_interval_value = max_interval_value
+        self.current_value = 0
+        self.last_value = 0
         self.file = file
         self.overall_start = time.time()
         self.interval_start = self.overall_start
-        self.interval_steps = 0
 
-    def print_interval(self, steps, time_now):
+    def print_interval(self, time_now):
         elapsed = time_now - self.overall_start
         elapsed_str = secs_to_hours(elapsed)
-        speed_unit = 's'
         interval_duration = time_now - self.interval_start
-        print_speed = speed = self.interval_steps / (0.001 if interval_duration == 0.0 else interval_duration)
-        if print_speed < 0.1:
+        value_difference = self.current_value - self.last_value
+        print_speed = speed = value_difference / (0.001 if interval_duration == 0.0 else interval_duration)
+        time_unit = 's'
+        if self.time_unit is not None:
+            time_unit = self.time_unit
+            print_speed = print_speed * {'ms': 1/1000, 's': 1, 'm': 60, 'h': 60 * 60, 'd': 24 * 60 * 60}[time_unit]
+        elif print_speed < 0.1:
             print_speed = print_speed * 60
-            speed_unit = 'm'
+            time_unit = 'm'
             if print_speed < 1:
                 print_speed = print_speed * 60
-                speed_unit = 'h'
+                time_unit = 'h'
         elif print_speed > 1000:
             print_speed = print_speed / 1000.0
-            speed_unit = 'ms'
+            time_unit = 'ms'
         if self.total is None:
-            line = self.line_format.format(self.global_step,
-                                           self.entity,
+            line = self.line_format.format(self.format(self.current_value),
                                            elapsed_str,
-                                           print_speed,
-                                           self.entity,
-                                           speed_unit)
+                                           self.format(print_speed),
+                                           time_unit)
         else:
-            percent = self.global_step * 100.0 / self.total
-            eta = secs_to_hours(max(0, ((self.total - self.global_step) / speed) if speed > 0 else 0))
-            line = self.line_format.format(self.global_step,
-                                           self.total,
-                                           self.entity,
+            percent = self.current_value * 100.0 / self.total
+            eta = secs_to_hours(max(0, ((self.total - self.current_value) / speed) if speed > 0 else 0))
+            line = self.line_format.format(self.format(self.current_value),
+                                           self.format(self.total),
                                            percent,
                                            elapsed_str,
                                            eta,
-                                           print_speed,
-                                           self.entity,
-                                           speed_unit)
+                                           self.format(print_speed),
+                                           time_unit)
         announce(line, file=self.file, flush=True)
-        self.interval_steps = 0
+        self.last_value = self.current_value
         self.interval_start = time_now
 
-    def increment(self, steps=1):
-        self.global_step += steps
-        self.interval_steps += steps
+    def update(self, value=None):
+        if value is not None:
+            self.current_value = value
         t = time.time()
-        if ((self.step is None and t - self.interval_start > self.interval) or
-                (self.step is not None and self.interval_steps >= self.step)):
-            self.print_interval(self.interval_steps, t)
+        value_difference = self.current_value - self.last_value
+        if ((self.max_interval_value is None and t - self.interval_start > self.max_interval_time) or
+                (self.max_interval_value is not None and value_difference >= self.max_interval_value)):
+            self.print_interval(t)
+
+    def increment(self, value_difference=1):
+        self.update(value=self.current_value + value_difference)
 
     def end(self):
-        if self.interval_steps > 0:
-            self.print_interval(self.interval_steps, time.time())
+        if self.current_value - self.last_value > 0:
+            self.print_interval(time.time())
 
     def __iter__(self):
         for obj in self.it:
             yield obj
-            self.increment()
+            value = self.value_getter(obj)
+            if self.absolute:
+                self.update(value=value)
+            else:
+                self.increment(value_difference=value)
         self.end()
 
 
-def download(from_url, to_path):
+def download(from_url, to_path, block_size=1 * MEGABYTE):
     r = requests.get(from_url, stream=True)
     total_size = int(r.headers.get('content-length', 0))
-    block_size = 1 * MEGABYTE
-    total_blocks = (total_size // block_size) + 1
     with open(to_path, 'wb') as to_file:
         announce('Downloading "{}" to "{}"...'.format(from_url, to_path))
-        for block in log_progress(r.iter_content(block_size), total=total_blocks, entity='MB'):
+        for block in log_progress(r.iter_content(block_size), total=total_size, format='bytes', value_getter=len):
             to_file.write(block)
 
 
@@ -155,14 +181,13 @@ def maybe_download(from_url, to_path, force=False):
         return True
 
 
-def ungzip(from_path, to_path):
+def ungzip(from_path, to_path, block_size=1 * MEGABYTE):
     total_size = os.path.getsize(from_path)
-    block_size = 1 * MEGABYTE
-    total_blocks = (total_size // block_size) + 1
     with open(from_path, 'rb') as from_file, open(to_path, 'wb') as to_file:
         gunzip = subprocess.Popen([UNZIP], stdin=subprocess.PIPE, stdout=to_file)
         announce('Unzipping "{}" to "{}"...'.format(from_path, to_path))
-        for block in log_progress(iter(partial(from_file.read, block_size), b''), total=total_blocks, entity='MB'):
+        blocks = iter(partial(from_file.read, block_size), b'')
+        for block in log_progress(blocks, total=total_size, format='bytes', value_getter=len):
             gunzip.stdin.write(block)
 
 
@@ -175,9 +200,8 @@ def maybe_ungzip(from_path, to_path, force=False):
         return True
 
 
-def join_files(from_paths, to_path):
-    block_size = 10 * MEGABYTE
-    total_blocks = sum(map(lambda f: math.ceil(os.path.getsize(f) / block_size), from_paths))
+def join_files(from_paths, to_path, block_size=1 * MEGABYTE):
+    total_size = sum(map(lambda f: os.path.getsize(f), from_paths))
 
     def _read_blocks():
         for from_path in from_paths:
@@ -186,7 +210,7 @@ def join_files(from_paths, to_path):
 
     with open(to_path, 'wb') as to_file:
         announce('Joining {} files to "{}"...'.format(len(from_paths), to_path))
-        for block in log_progress(_read_blocks(), total=total_blocks, entity='MB'):
+        for block in log_progress(_read_blocks(), total=total_size, format='bytes', value_getter=len):
             to_file.write(block)
 
 

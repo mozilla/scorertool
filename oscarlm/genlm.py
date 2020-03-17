@@ -10,7 +10,7 @@ import subprocess
 from collections import Counter
 from multiprocessing import Process, Queue
 from languages import LANGUAGE_CODES, get_language
-from utils import maybe_download, maybe_ungzip, join_files, section, log_progress, MEGABYTE, announce, parse_file_size
+from utils import maybe_download, maybe_ungzip, join_files, section, log_progress, announce, parse_file_size
 
 STOP_TOKEN = False
 
@@ -61,7 +61,7 @@ def count_words(index, counters):
 
 def aggregate_counters(vocabulary_txt, source_bytes, counters):
     overall_counter = Counter()
-    progress_indicator = log_progress(total=source_bytes / MEGABYTE, entity='MB', format=':8.2f')
+    progress_indicator = log_progress(total=source_bytes, format='bytes')
     while True:
         counter_and_read_bytes = counters.get()
         if counter_and_read_bytes == STOP_TOKEN:
@@ -71,7 +71,7 @@ def aggregate_counters(vocabulary_txt, source_bytes, counters):
             return
         counter, read_bytes = counter_and_read_bytes
         overall_counter += counter
-        progress_indicator.increment(steps=read_bytes / MEGABYTE)
+        progress_indicator.increment(value_difference=read_bytes)
         if len(overall_counter.keys()) > ARGS.prune_factor * ARGS.vocabulary_size:
             overall_counter = Counter(overall_counter.most_common(ARGS.vocabulary_size))
 
@@ -124,6 +124,7 @@ def main():
                 p.join()
             counters.put(STOP_TOKEN)
             aggregator_process.join()
+            print('')
             partials = list(map(lambda i: get_partial_path(i), range(ARGS.workers)))
             join_files(partials, prepared_txt)
             for partial in partials:
@@ -236,10 +237,10 @@ def parse_args():
                         help='number of preparation and counting workers')
     parser.add_argument('--block-size', type=str, default='100M',
                         help='(maximum) preparation block size per worker to read at once during preparation')
-    parser.add_argument('--prune-factor', type=int, default=10,
-                        help='times --vocabulary-size of items to keep in each vocabulary aggregator')
     parser.add_argument('--vocabulary-size', type=int, default=500000,
                         help='final number of words in vocabulary')
+    parser.add_argument('--prune-factor', type=int, default=10,
+                        help='times --vocabulary-size of entries to keep after pruning in each vocabulary aggregator')
     parser.add_argument('--alpha', type=float, default=None,
                         help='overrides language-specific alpha parameter')
     parser.add_argument('--beta', type=float, default=None,
