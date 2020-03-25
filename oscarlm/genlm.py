@@ -145,6 +145,7 @@ def main():
             '--temp_prefix', temp_prefix,
             '--memory', '80%',
             '--discount_fallback',
+            '--limit_vocab_file', vocabulary_txt,
             '--text', prepared_txt,
             '--arpa', unfiltered_arpa,
             '--skip', 'symbols',
