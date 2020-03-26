@@ -105,7 +105,7 @@ def main():
     section('Unzipping text data')
     redo = maybe_ungzip(raw_txt_gz, unprepared_txt, force=redo)
 
-    redo = redo or ARGS.force_generate
+    redo = redo or ARGS.force_prepare
 
     section('Preparing text and building vocabulary')
     if redo or not os.path.isfile(prepared_txt) or not os.path.isfile(vocabulary_txt):
@@ -136,6 +136,8 @@ def main():
             raise
     else:
         announce('Files "{}" and \n\t"{}" existing - not preparing'.format(prepared_txt, vocabulary_txt))
+
+    redo = redo or ARGS.force_generate
 
     section('Building unfiltered language model')
     if redo or not os.path.isfile(unfiltered_arpa):
@@ -258,9 +260,11 @@ def parse_args():
                              'or the alphabet should be all utf-8 characters (utf8), '
                              'or the alphabet should be language specific (specific)')
     parser.add_argument('--force-download', action='store_true',
-                        help='forces re-downloading and re-generating from scratch')
+                        help='forces downloading, preparing and generating from scratch')
+    parser.add_argument('--force-prepare', action='store_true',
+                        help='forces preparing and generating from scratch (reusing available download)')
     parser.add_argument('--force-generate', action='store_true',
-                        help='forces re-generating from scratch (reusing available download)')
+                        help='forces generating from scratch (reusing prepared data)')
     return parser.parse_args()
 
 
