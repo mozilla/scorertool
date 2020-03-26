@@ -19,7 +19,7 @@ MODELS_DIR = os.getenv('MODELS_DIR', os.path.join(BASE_DIR, 'models'))
 class LanguageBase:
     def __init__(self, filename):
         self.code = code_from_filename(filename)
-        self.alphabet = None
+        self.alphabet = ' abcdefghijklmnopqrstuvwxyz\''
         self.model_dir = os.path.join(MODELS_DIR, self.code)
         self.text_url = 'https://traces1.inria.fr/oscar/files/Compressed/{}_dedup.txt.gz'.format(self.code)
         self.substitutions = []
