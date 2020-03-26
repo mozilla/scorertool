@@ -22,6 +22,8 @@ class LanguageBase:
         self.alphabet = ' abcdefghijklmnopqrstuvwxyz\''
         self.model_dir = os.path.join(MODELS_DIR, self.code)
         self.text_url = 'https://traces1.inria.fr/oscar/files/Compressed/{}_dedup.txt.gz'.format(self.code)
+        self.order = 5
+        self.prune = [0, 0, 10]
         self.substitutions = []
         self.pre_filter = str.maketrans(dict.fromkeys('/()[]{}<>:'))
         self.simplify = True

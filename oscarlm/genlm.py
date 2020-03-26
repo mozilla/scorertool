@@ -72,7 +72,7 @@ def aggregate_counters(vocabulary_txt, source_bytes, counters):
         counter, read_bytes = counter_and_read_bytes
         overall_counter += counter
         progress_indicator.increment(value_difference=read_bytes)
-        if len(overall_counter.keys()) > ARGS.prune_factor * ARGS.vocabulary_size:
+        if len(overall_counter.keys()) > ARGS.keep_factor * ARGS.vocabulary_size:
             overall_counter = Counter(overall_counter.most_common(ARGS.vocabulary_size))
 
 
@@ -140,7 +140,7 @@ def main():
     section('Building unfiltered language model')
     if redo or not os.path.isfile(unfiltered_arpa):
         redo = True
-        subprocess.check_call([
+        lmplz_args = [
             KENLM_BIN + '/lmplz',
             '--temp_prefix', temp_prefix,
             '--memory', '80%',
@@ -149,9 +149,12 @@ def main():
             '--text', prepared_txt,
             '--arpa', unfiltered_arpa,
             '--skip', 'symbols',
-            '--order', '5',
-            '--prune', '0', '0', '1'
-        ])
+            '--order', str(LANG.order)
+        ]
+        if len(LANG.prune) > 0:
+            lmplz_args.append('--prune')
+            lmplz_args.extend(list(map(str, LANG.prune)))
+        subprocess.check_call(lmplz_args)
     else:
         announce('File "{}" existing - not generating'.format(unfiltered_arpa))
 
@@ -240,8 +243,12 @@ def parse_args():
                         help='(maximum) preparation block size per worker to read at once during preparation')
     parser.add_argument('--vocabulary-size', type=int, default=500000,
                         help='final number of words in vocabulary')
-    parser.add_argument('--prune-factor', type=int, default=10,
+    parser.add_argument('--keep-factor', type=int, default=10,
                         help='times --vocabulary-size of entries to keep after pruning in each vocabulary aggregator')
+    parser.add_argument('--order', type=int,
+                        help='overrides language-specific KenLM order')
+    parser.add_argument('--prune', type=str,
+                        help='overrides language-specific KenLM pruning - format: x:y:z:...')
     parser.add_argument('--alpha', type=float, default=None,
                         help='overrides language-specific alpha parameter')
     parser.add_argument('--beta', type=float, default=None,
@@ -260,6 +267,10 @@ def parse_args():
 if __name__ == '__main__':
     ARGS = parse_args()
     LANG = get_language(ARGS.language)
+    if ARGS.order is not None:
+        LANG.order = ARGS.order
+    if ARGS.prune is not None:
+        LANG.prune = list(map(int, ARGS.prune.split(':')))
     if ARGS.alpha is not None:
         LANG.alpha = ARGS.alpha
     if ARGS.beta is not None:
