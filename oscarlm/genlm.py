@@ -87,6 +87,7 @@ def get_serialized_utf8_alphabet():
 
 
 def main():
+    alphabet_txt = os.path.join(LANG.model_dir, 'alphabet.txt')
     raw_txt_gz = os.path.join(LANG.model_dir, 'raw.txt.gz')
     unprepared_txt = os.path.join(LANG.model_dir, 'unprepared.txt')
     prepared_txt = os.path.join(LANG.model_dir, 'prepared.txt')
@@ -97,9 +98,13 @@ def main():
     kenlm_scorer = os.path.join(LANG.model_dir, 'kenlm.scorer')
     temp_prefix = os.path.join(LANG.model_dir, 'tmp')
 
+    section('Writing alphabet file', empty_lines_before=1)
+    with open(alphabet_txt, 'w', encoding='utf-8') as alphabet_file:
+        alphabet_file.write('\n'.join(LANG.alphabet) + '\n')
+
     redo = ARGS.force_download
 
-    section('Downloading text data', empty_lines_before=1)
+    section('Downloading text data')
     redo = maybe_download(LANG.text_url, raw_txt_gz, force=redo)
 
     section('Unzipping text data')
